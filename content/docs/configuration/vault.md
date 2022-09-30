@@ -144,6 +144,8 @@ spec:
           key: token
 ```
 
+<a id="static-service-account-token"></a>
+
 ### Authenticating with Kubernetes Service Accounts
 
 Vault can be configured so that applications can authenticate using Kubernetes
@@ -253,6 +255,75 @@ Kubernetes 1.24 and above.
               name: vault-issuer-token
               key: token
     ```
+
+### Authenticating with a Kubernetes Service Account Without A Secret
+
+The [previous method](#static-service-account-token) of authenticating with
+Vault has a major disadvantage: it relies on a less secure "static" token (by
+"static", we mean a token that does not have an expiry time).
+
+Using the field `serviceAccountRef` instead of `secretRef`, you can let
+cert-manager request ephemeral tokens.
+
+The first step is to create a `ServiceAccount` resource, like in the `secretRef`
+method:
+
+```sh
+kubectl create serviceaccount -n sandbox vault-issuer
+```
+
+Then, you will need to add an RBAC Role so that cert-manager can use the service
+account:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-issuer
+  namespace: sandbox
+rules:
+  - apiGroups: ['']
+    resources: ['serviceaccounts/token']
+    resourceNames: ['vault-issuer']
+    verbs: ['create']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-issuer
+  namespace: sandbox
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-issuer
+```
+
+Finally, you can create the Issuer resource:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: vault-issuer
+  namespace: sandbox
+spec:
+  vault:
+    path: pki_int/sign/example-dot-com
+    server: https://vault.local
+    caBundle: <base64 encoded caBundle PEM file>
+    auth:
+      kubernetes:
+        role: my-app-1
+        mountPath: /v1/auth/kubernetes
+        serviceAccountRef:
+          name: vault-issuer
+          audience: vault
+          expirationSeconds: 600 # 10 minutes
+```
 
 ## Verifying the issuer Deployment
 
